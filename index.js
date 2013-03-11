@@ -36,6 +36,7 @@ LineParser.prototype.parse = function(data) {
 
 
 
+
 // The LogitechMediaServer object is an event emitter with a few properties.
 // After creating it, call .start() and wait for the "registration_finished" event.
 
@@ -43,6 +44,7 @@ function LogitechMediaServer(address) {
   this.address = address
   this.players = {}
   this.numPlayers = 0
+  this.syncGroups = []
 }
 util.inherits(LogitechMediaServer, EventEmitter)
 
@@ -63,16 +65,16 @@ LogitechMediaServer.prototype.start = function() {
   // that the LMS telnet connection emits
   this.line_parser.on("line", function(data) {
     // Uncomment the next line to see text lines coming back from telnet
-    // console.log("< " + data.toString().replace(/\n/g,"\\n"))
+    //console.log("< " + data.toString().replace(/\n/g,"\\n"))
     self.handleLine(data)
   })
 
-  // Start things off by asking how many players are connected.
-  this.loadPlayers()
+  this.initEvents()
 }
 
-LogitechMediaServer.prototype.loadPlayers = function() {
+LogitechMediaServer.prototype.initEvents = function() {
   var self = this
+
   this.getPlayerCount()
   this.on('playerCountChange', function(count) {
     // reset in-memory knowledge of players
@@ -84,8 +86,15 @@ LogitechMediaServer.prototype.loadPlayers = function() {
       this.runCmd('player id ' + i +' ?')
     }
   })
+
   this.on('playerLoaded', function(playerDetails) {
     self.registerPlayer(playerDetails.index, playerDetails.mac)
+  })
+
+  this.on('syncgroupsLoaded', function() {
+    // Can now start listening for all sorts of things!
+    this.runCmd("listen 1")
+    this.emit('ready')
   })
 }
 
@@ -93,15 +102,18 @@ LogitechMediaServer.prototype.getPlayerCount = function() {
   this.runCmd('player count ?')
 }
 
+LogitechMediaServer.prototype.getPlayer = function(macAddress) {
+  return this.players[macAddress]
+}
+
 // Passed a player index and a player MAC address, add to in-memory dictionary of players
 LogitechMediaServer.prototype.registerPlayer = function(playerIndex, playerMac) {
   this.players[playerMac] = new SqueezePlayer(this.telnet, playerIndex, playerMac)
 
-  // Check whether this is the last player we're waiting for, if so emit "registration_finished"
+  // Check whether this is the last player we're waiting for
   if (Object.keys(this.players).length == this.numPlayers) {
-    this.emit('registration_finished')
-    // Can now start listening for all sorts of things!
-    this.runCmd("listen 1")
+    // load SyncGroups
+    this.runCmd('syncgroups ?')
   }
 }
 
@@ -192,71 +204,78 @@ LogitechMediaServer.prototype.handleLine = function(buffer) {
     return true
   }
 
+  params = self.handle(buffer, "syncgroups")
+  if (params || buffer.toString() === 'syncgroups') {
+    if (params) {
+      params = this.convertParamsToObjects(params, 2)
+      params.forEach(function(param) {
+        self.syncGroups.push(param.sync_members)
+      })      
+    }
+    this.emit('syncgroupsLoaded')
+    return true
+  }
+
   // Just handle the "listen" response (LMS should just respond with 'listen 1' at the beginning)
   if (self.handle(buffer, "listen", function() {})) {
-    handled = true
+    return true
   }
 
   // ~~~~~~~~~~~~~~ keywords below here are those which are associated with an individual player ~~~~~~~~~~~~~~~~~~
 
-  if (self.handle_with_id(buffer, "signalstrength", function(player, params, b) {
-    player.setProperty("signalstrength", parseInt(params))
-  })) {
-    handled = true
-  }
 
-  if (self.handle_with_id(buffer, "power", function(player, params, b) {
-    player.setProperty("power", parseInt(params))
+  // if (self.handle_with_id(buffer, "power", function(player, params, b) {
+  //   player.setProperty("power", parseInt(params))
 
-    if (player.power == 1) {
-      // Wait a tiny bit while player is powering up and then ask what state the player is in
-      setTimeout(function() {
-        player.runTelnetCmd("mode ?")
-      }, 1500)
-    } else {
-      player.setProperty("mode", "off")
-    }
-  })) {
-    handled = true
-  }
+  //   if (player.power == 1) {
+  //     // Wait a tiny bit while player is powering up and then ask what state the player is in
+  //     setTimeout(function() {
+  //       player.runTelnetCmd("mode ?")
+  //     }, 1500)
+  //   } else {
+  //     player.setProperty("mode", "off")
+  //   }
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "name", function(player, params, b) {
-    player.setProperty("name", params)
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "name", function(player, params, b) {
+  //   player.setProperty("name", params)
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "current_title", function(player, params, b) {
-    player.setProperty("current_title", params)
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "current_title", function(player, params, b) {
+  //   player.setProperty("current_title", params)
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "mode", function(player, params, b) {
-    player.setProperty("mode", params) // "play", "stop" or "pause"
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "mode", function(player, params, b) {
+  //   player.setProperty("mode", params) // "play", "stop" or "pause"
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "play", function(player, params, b) {
-    player.setProperty("mode", "play")
-    // player has started playing something.  Let's find out what!
-    player.runTelnetCmd("current_title ?")
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "play", function(player, params, b) {
+  //   player.setProperty("mode", "play")
+  //   // player has started playing something.  Let's find out what!
+  //   player.runTelnetCmd("current_title ?")
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "stop", function(player, params, b) {
-    player.setProperty("mode", "stop")
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "stop", function(player, params, b) {
+  //   player.setProperty("mode", "stop")
+  // })) {
+  //   handled = true
+  // }
 
-  if (self.handle_with_id(buffer, "pause", function(player, params, b) {
-    player.setProperty("mode", "pause")
-  })) {
-    handled = true
-  }
+  // if (self.handle_with_id(buffer, "pause", function(player, params, b) {
+  //   player.setProperty("mode", "pause")
+  // })) {
+  //   handled = true
+  // }
 
   if (!handled) {
     // handle any string received that starts with an id and isn't handled yet by passing events
@@ -268,6 +287,29 @@ LogitechMediaServer.prototype.handleLine = function(buffer) {
       console.log("unhandled line", decodeURIComponent(buffer.toString()))
     }
   }
+}
+
+LogitechMediaServer.prototype.convertParamsToObjects = function(params, numKeys) {
+  params = params.split(' ')
+  var 
+    collection = []
+    , obj = {}
+    , count = 0
+
+  params.forEach(function(param) {
+    // split on only first occurence
+    param = param.split(':')
+    param = [param.shift(), param.join(':')]
+    var values = param[1].split(',')
+    obj[param[0]] = values
+    count++
+    if (count === numKeys) {
+      collection.push(obj)
+      obj = {}
+      count = 0
+    }
+  })
+  return collection
 }
 
 module.exports = LogitechMediaServer

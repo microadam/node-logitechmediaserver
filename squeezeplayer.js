@@ -74,6 +74,7 @@ SqueezePlayer.prototype.handleResponse = function(cmdString) {
     return true
   }
 
+  console.log('unhandled command: ' + this.mac + ' ' + cmdString)
 }
 
 
