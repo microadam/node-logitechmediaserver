@@ -25,12 +25,12 @@ LogitechMediaServer.prototype.start = function() {
   this.cli = new CliInterface(this.address, this.port)
   this.cli.listen()
 
-  this.handleEvents()
+  this.registerEvents()
 }
 
-LogitechMediaServer.prototype.handleEvents = function() {
+LogitechMediaServer.prototype.registerEvents = function() {
   var self = this
-  this.getPlayerCount()
+  this.retrievePlayerCount()
   this.cli.on('playerCountChange', function(count) {
     // reset in-memory knowledge of players
     self.numPlayers = count
@@ -38,35 +38,54 @@ LogitechMediaServer.prototype.handleEvents = function() {
 
     // Now issue a "player id" request for each player
     for (var i = 0; i < self.numPlayers; i++) {
-      self.cli.runCmd('player id ' + i +' ?')
+      self.retrievePlayerMacFromIndex(i)
     }
-  })
-
-  this.cli.on('handlePlayerEvent', function(eventDetails) {
-    var 
-      macAddress = Object.keys(eventDetails)[0]
-    , command = eventDetails[macAddress]
-
-    self.players[macAddress].handleResponse(command)
   })
 
   this.cli.on('playerLoaded', function(playerDetails) {
     self.registerPlayer(playerDetails.index, playerDetails.mac)
   })
 
-  this.cli.on('syncgroupsLoaded', function() {
-    // Can now start listening for all sorts of things!
-    self.cli.runCmd("listen 1")
-    self.emit('ready')
+  this.cli.on('syncGroupsChanged', function() {
+    this.retrieveSyncGroups()
   })
+
+  this.cli.on('syncGroupsLoaded', function(syncGroups) {
+    if (syncGroups) {
+      self.syncGroups = syncGroups
+    }
+  })
+
+  this.cli.once('syncGroupsLoaded', function() {
+    // Can now start listening for all sorts of things!
+    self.startListening()
+    self.emit('ready', this)
+  })
+
 }
 
-LogitechMediaServer.prototype.getPlayerCount = function() {
+LogitechMediaServer.prototype.retrievePlayerCount = function() {
   this.cli.runCmd('player count ?')
+}
+
+LogitechMediaServer.prototype.startListening = function() {
+  this.cli.runCmd("listen 1")
+}
+
+LogitechMediaServer.prototype.retrievePlayerMacFromIndex = function(index) {
+  this.cli.runCmd('player id ' + index +' ?')
+}
+
+LogitechMediaServer.prototype.retrieveSyncGroups = function() {
+  this.cli.runCmd('syncgroups ?')
 }
 
 LogitechMediaServer.prototype.getPlayer = function(macAddress) {
   return this.players[macAddress]
+}
+
+LogitechMediaServer.prototype.getSyncGroups = function() {
+  return this.syncGroups
 }
 
 // Passed a player index and a player MAC address, add to in-memory dictionary of players
@@ -76,7 +95,7 @@ LogitechMediaServer.prototype.registerPlayer = function(playerIndex, playerMac) 
   // Check whether this is the last player we're waiting for
   if (Object.keys(this.players).length === this.numPlayers) {
     // load SyncGroups
-    this.cli.runCmd('syncgroups ?')
+    this.retrieveSyncGroups()
   }
 }
 
