@@ -80,7 +80,7 @@ LogitechMediaServer.prototype.registerEvents = function() {
         self.syncGroups.push([player.mac])
       }
     }    
-    
+    self.emit('syncGroupChange', self.syncGroups)
   })
 
   this.cli.once('syncGroupsLoaded', function() {
